@@ -30,16 +30,14 @@ AeroFlip 采用**零能耗（Zero-Power）**的纯机械设计思路：
 
 1. 克隆本仓库：
    ```bash
-   git clone https://github.com/yearafteryear/AeroFlip-Kinematic-Sim.git
+   git clone https://github.com/nianfuyinian/AeroFlip-Kinematic-Sim.git
 2. 使用任何现代浏览器（Chrome, Edge, Firefox, Safari）直接双击打开 index.html 文件。
 3. 拖动页面中的滑块，即可交互式体验卸货全过程。
 
 ## 🛠️ 技术实现细节
 
 1. 防穿模计算：底层物理引擎引入了动态边界碰撞检测，确保翻转圆弧轨迹完美贴合接货篮内壁。
-
 2. 绳索柔性模拟：采用二次贝塞尔曲线（Quadratic Bézier Curves）实时解算绳索在受力（直线）与空载（下垂）状态下的视觉过渡。
-
 3. 粒子掉落引擎：内置简易重力加速度与反弹阻尼算法，模拟货物倾泻的真实物理堆积感。
 
 ## 📄 开源协议 (License)

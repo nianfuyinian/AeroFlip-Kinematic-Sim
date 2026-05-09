@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AeroFlip 双钩卸货系统 - 图层修正版</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f4f6f8; 
+            color: #333; 
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h2 { margin-top: 0; font-weight: 600; letter-spacing: 1px; color: #111; }
+        .container {
+            position: relative;
+            background-color: #ffffff; 
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+            overflow: hidden;
+            border: 1px solid #e0e0e0;
+        }
+        canvas { display: block; }
+        .control-panel {
+            margin-top: 20px;
+            padding: 20px;
+            background: #ffffff;
+            border-radius: 12px;
+            width: 760px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            border: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .controls-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-grow: 1;
+            background: #f8f9fa;
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+        }
+        input[type=range] {
+            flex-grow: 1;
+            cursor: pointer;
+            height: 6px;
+            -webkit-appearance: none;
+            background: #dcdcdc;
+            border-radius: 3px;
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #007aff;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0, 122, 255, 0.4);
+        }
+        .btn-reset {
+            background: linear-gradient(135deg, #007aff, #0056b3);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.1s;
+            box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+        }
+        .btn-reset:active { transform: scale(0.95); }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+        }
+        .indicator {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #888;
+            border: 1px solid #e0e0e0;
+            flex: 1;
+            text-align: center;
+            margin: 0 5px;
+            background: #fff;
+        }
+        .indicator.active {
+            color: #0056b3;
+            border-color: #007aff;
+            background: rgba(0, 122, 255, 0.08);
+        }
+        .indicator.alert {
+            color: #d32f2f;
+            border-color: #e53935;
+            background: rgba(229, 57, 53, 0.08);
+        }
+    </style>
+</head>
+<body>
+
+    <h2>AeroFlip 系统仿真 (高清晰图层版)</h2>
+
+    <div class="container">
+        <canvas id="simCanvas" width="800" height="550"></canvas>
+    </div>
+
+    <div class="control-panel">
+        <div class="controls-top">
+            <div class="slider-group">
+                <span style="font-size: 14px; color: #666;">低空降落 (0%)</span>
+                <input type="range" id="altSlider" min="0" max="100" value="100" step="0.5">
+                <span style="font-size: 14px; color: #007aff; font-weight: bold;">高空飞行 (100%)</span>
+            </div>
+            <button class="btn-reset" onclick="resetSystem()">⟳ 重新装载</button>
+        </div>
+        <div class="status-bar">
+            <div id="stat1" class="indicator active">1. 悬吊下降</div>
+            <div id="stat2" class="indicator">2. 触底脱钩 (稳坐篮内)</div>
+            <div id="stat3" class="indicator">3. 拉升倾倒</div>
+            <div id="stat4" class="indicator">4. 空袋起飞</div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+    const slider = document.getElementById('altSlider');
+
+    // --- 核心参数 ---
+    const DRONE_X = 400;
+    const ROPE_SHORT = 140; 
+    const ROPE_LONG = 240;  
+    
+    const BAG_W = 70;
+    const BAG_H = 50; 
+    
+    // 篮子坐标
+    const FLOOR_Y = 530; 
+    const BASKET_BOTTOM_Y = FLOOR_Y - 20; 
+    const BASKET_TOP_Y = 410; 
+    const BASKET_LEFT_X = 310;
+    const BASKET_RIGHT_X = 490;
+
+    const HANG_ANGLE = -1.457;
+
+    let droneY = 60;
+    let isReleased = false;
+    let isCargoDropped = false;
+    let cargoItems = [];
+
+    function initCargo() {
+        cargoItems = [];
+        for(let i=0; i<30; i++) {
+            cargoItems.push({
+                offsetX: (Math.random() - 0.5) * (BAG_W - 18),
+                offsetY: Math.random() * (BAG_H/2 - 15) + 5,
+                radius: Math.random() * 3 + 4,
+                color: Math.random() > 0.5 ? '#f39c12' : '#e67e22',
+                x: 0, y: 0, vx: 0, vy: 0, activePhysics: false
+            });
+        }
+    }
+
+    function resetSystem() {
+        slider.value = 100;
+        isReleased = false;
+        isCargoDropped = false;
+        initCargo();
+        updateLogic();
+    }
+
+    function drawRope(x1, y1, x2, y2, isTaut, color, width) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        if (isTaut) {
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+        } else {
+            let ctrlX = (x1 + x2) / 2 + 35;
+            let ctrlY = Math.max(y1, y2) + 50;
+            ctx.moveTo(x1, y1);
+            ctx.quadraticCurveTo(ctrlX, ctrlY, x2, y2);
+        }
+        ctx.stroke();
+    }
+
+    function updateLogic() {
+        const altPercent = parseFloat(slider.value);
+        
+        // 高度映射
+        droneY = 360 - (altPercent / 100) * 300;
+
+        let bagX, bagY, bagAngle;
+        let shortTaut = true;
+        let longTaut = false;
+        let hookY = droneY + ROPE_SHORT;
+        let Ax, Ay; 
+
+        if (hookY + BAG_H >= BASKET_BOTTOM_Y && !isReleased) {
+            isReleased = true; 
+        }
+
+        if (!isReleased) {
+            bagAngle = 0;
+            bagX = DRONE_X;
+            bagY = hookY + BAG_H/2; 
+            Ax = bagX + BAG_W/2;
+            Ay = bagY + BAG_H/2;
+            shortTaut = true;
+            longTaut = false;
+        } else {
+            shortTaut = false;
+            hookY = droneY + ROPE_SHORT; 
+
+            let Px = DRONE_X - BAG_W/2;
+            let Py = BASKET_BOTTOM_Y; 
+            
+            let Dx = DRONE_X;
+            let Dy = droneY;
+
+            let d = Math.hypot(Dx - Px, Dy - Py);
+            let r1 = BAG_W; 
+            let r2 = ROPE_LONG; 
+
+            let distToRestingA = Math.hypot(Dx - (Px + BAG_W), Dy - Py);
+
+            if (distToRestingA <= ROPE_LONG) {
+                bagAngle = 0;
+                bagX = DRONE_X;
+                bagY = BASKET_BOTTOM_Y - BAG_H/2;
+                Ax = bagX + BAG_W/2;
+                Ay = bagY + BAG_H/2;
+                longTaut = false;
+            } else if (d >= r1 + r2) {
+                longTaut = true;
+                let dirAngle = Math.atan2(Dy - Py, Dx - Px);
+                bagAngle = dirAngle; 
+                
+                Ax = Dx - ROPE_LONG * Math.cos(dirAngle);
+                Ay = Dy - ROPE_LONG * Math.sin(dirAngle);
+                
+                bagX = Ax - (BAG_W/2)*Math.cos(bagAngle) + (-BAG_H/2)*Math.sin(bagAngle);
+                bagY = Ay - (BAG_W/2)*Math.sin(bagAngle) - (-BAG_H/2)*Math.cos(bagAngle);
+            } else {
+                longTaut = true;
+                let a = (r1*r1 - r2*r2 + d*d) / (2*d);
+                let h2 = r1*r1 - a*a;
+                let h = h2 > 0 ? Math.sqrt(h2) : 0;
+
+                let P2x = Px + a * (Dx - Px) / d;
+                let P2y = Py + a * (Dy - Py) / d;
+
+                Ax = P2x - h * (Dy - Py) / d;
+                Ay = P2y + h * (Dx - Px) / d;
+
+                bagAngle = Math.atan2(Ay - Py, Ax - Px);
+                
+                bagX = Px + (BAG_W/2)*Math.cos(bagAngle) - (-BAG_H/2)*Math.sin(bagAngle);
+                bagY = Py + (BAG_W/2)*Math.sin(bagAngle) + (-BAG_H/2)*Math.cos(bagAngle);
+            }
+        }
+
+        if (bagAngle < -1.4 && !isCargoDropped) {
+            isCargoDropped = true;
+            cargoItems.forEach(item => {
+                item.activePhysics = true;
+                item.vx = -1.5 + Math.random() * 2; 
+                item.vy = -1 + Math.random() * 2;
+            });
+        }
+
+        document.querySelectorAll('.indicator').forEach(el => el.className = 'indicator');
+        if (!isReleased) {
+            document.getElementById('stat1').classList.add('active');
+        } else if (!longTaut) {
+            document.getElementById('stat2').classList.add('active', 'alert');
+        } else if (bagAngle > HANG_ANGLE + 0.05) { 
+            document.getElementById('stat3').classList.add('active');
+        } else {
+            document.getElementById('stat4').classList.add('active');
+        }
+
+        render(bagX, bagY, bagAngle, shortTaut, longTaut, hookY, Ax, Ay);
+    }
+
+    function render(bagX, bagY, bagAngle, shortTaut, longTaut, hookY, Ax, Ay) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // --- 1. 底层：环境与接货篮绘制 ---
+        ctx.fillStyle = '#ebedf0'; 
+        ctx.fillRect(0, FLOOR_Y, canvas.width, canvas.height - FLOOR_Y);
+        ctx.strokeStyle = '#d5d9df'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, FLOOR_Y); ctx.lineTo(canvas.width, FLOOR_Y); ctx.stroke();
+
+        ctx.fillStyle = '#7f8c8d'; ctx.fillRect(300, FLOOR_Y - 20, 200, 20); 
+        ctx.fillStyle = '#34495e'; 
+        ctx.beginPath(); ctx.arc(330, FLOOR_Y, 15, 0, Math.PI*2); ctx.fill(); 
+        ctx.beginPath(); ctx.arc(470, FLOOR_Y, 15, 0, Math.PI*2); ctx.fill(); 
+        
+        ctx.fillStyle = 'rgba(41, 128, 185, 0.05)'; 
+        ctx.fillRect(BASKET_LEFT_X, BASKET_TOP_Y, BASKET_RIGHT_X - BASKET_LEFT_X, BASKET_BOTTOM_Y - BASKET_TOP_Y); 
+        
+        ctx.strokeStyle = '#2980b9'; 
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(BASKET_LEFT_X, BASKET_TOP_Y);
+        ctx.lineTo(BASKET_LEFT_X, BASKET_BOTTOM_Y); 
+        ctx.lineTo(BASKET_RIGHT_X, BASKET_BOTTOM_Y); 
+        ctx.lineTo(BASKET_RIGHT_X, BASKET_TOP_Y); 
+        ctx.stroke();
+
+        // --- 2. 中层：货袋主体绘制 ---
+        ctx.save();
+        ctx.translate(bagX, bagY);
+        ctx.rotate(bagAngle);
+        
+        // 纯白内部填充
+        ctx.fillStyle = '#ffffff'; 
+        ctx.fillRect(-BAG_W/2, -BAG_H/2, BAG_W, BAG_H);
+
+        // 货物渲染
+        if (!isCargoDropped) {
+            cargoItems.forEach(item => {
+                ctx.fillStyle = item.color;
+                ctx.beginPath(); ctx.arc(item.offsetX, item.offsetY, item.radius, 0, Math.PI*2); ctx.fill();
+                item.x = bagX + item.offsetX * Math.cos(bagAngle) - item.offsetY * Math.sin(bagAngle);
+                item.y = bagY + item.offsetX * Math.sin(bagAngle) + item.offsetY * Math.cos(bagAngle);
+            });
+        }
+
+        // 袋子包边
+        ctx.strokeStyle = '#95a5a6'; 
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-BAG_W/2, -BAG_H/2);
+        ctx.lineTo(-BAG_W/2, BAG_H/2);  
+        ctx.lineTo(BAG_W/2, BAG_H/2);   
+        ctx.lineTo(BAG_W/2, -BAG_H/2);  
+        ctx.stroke(); 
+
+        // 顶部虚线
+        ctx.strokeStyle = 'rgba(149, 165, 166, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(-BAG_W/2, -BAG_H/2);
+        ctx.lineTo(BAG_W/2, -BAG_H/2);
+        ctx.stroke();
+        ctx.setLineDash([]); 
+        ctx.restore();
+
+        // --- 3. 物理掉落处理 ---
+        if (isCargoDropped) {
+            cargoItems.forEach(item => {
+                if (item.activePhysics) {
+                    item.vy += 0.4; 
+                    item.x += item.vx;
+                    item.y += item.vy;
+
+                    if (item.y + item.radius > BASKET_BOTTOM_Y) {
+                        item.y = BASKET_BOTTOM_Y - item.radius;
+                        item.vy *= -0.4; 
+                        item.vx *= 0.7;  
+                    }
+                    if (item.x - item.radius < BASKET_LEFT_X) {
+                        item.x = BASKET_LEFT_X + item.radius; item.vx *= -0.5;
+                    } else if (item.x + item.radius > BASKET_RIGHT_X) {
+                        item.x = BASKET_RIGHT_X - item.radius; item.vx *= -0.5;
+                    }
+                }
+                ctx.fillStyle = item.color;
+                ctx.beginPath(); ctx.arc(item.x, item.y, item.radius, 0, Math.PI*2); ctx.fill();
+            });
+        }
+
+        // --- 4. 顶层：绳索与钩子绘制（图层覆盖在白色袋身之上） ---
+        // 绳索线条
+        drawRope(DRONE_X, droneY, DRONE_X, hookY, shortTaut, '#d32f2f', 2); 
+        drawRope(DRONE_X, droneY, Ax, Ay, longTaut, '#1976d2', 2.5); 
+        
+        // 蓝绳锚点
+        ctx.fillStyle = '#1976d2';
+        ctx.beginPath(); ctx.arc(Ax, Ay, 4, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.stroke();
+
+        // 红绳方形钩子
+        ctx.fillStyle = '#d32f2f';
+        ctx.fillRect(DRONE_X - 6, hookY - 6, 12, 12); 
+        ctx.strokeStyle = '#ffffff'; 
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(DRONE_X - 6, hookY - 6, 12, 12);
+
+        // --- 5. 顶层：无人机绘制 ---
+        ctx.fillStyle = '#a0a5a8'; 
+        ctx.beginPath(); ctx.roundRect(DRONE_X - 45, droneY - 12, 90, 24, 6); ctx.fill();
+        
+        ctx.fillStyle = '#e74c3c'; 
+        ctx.fillRect(DRONE_X + 35, droneY - 8, 10, 16);
+        
+        ctx.strokeStyle = '#7f8c8d'; 
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(DRONE_X - 40, droneY); ctx.lineTo(DRONE_X - 80, droneY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(DRONE_X + 40, droneY); ctx.lineTo(DRONE_X + 80, droneY); ctx.stroke();
+        
+        ctx.fillStyle = 'rgba(127, 140, 141, 0.4)'; 
+        ctx.beginPath(); ctx.ellipse(DRONE_X - 80, droneY - 5, 30, 4, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(DRONE_X + 80, droneY - 5, 30, 4, 0, 0, Math.PI*2); ctx.fill();
+    }
+
+    function loop() {
+        updateLogic();
+        requestAnimationFrame(loop);
+    }
+
+    slider.addEventListener('input', updateLogic);
+    initCargo();
+    loop();
+
+</script>
+
+</body>
+</html>
